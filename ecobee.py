@@ -10,8 +10,9 @@ colorama.init(autoreset=True)
 class ecobeepy:
 	base_url    = 'https://api.ecobee.com'
 	config_file = 'ecobeepy.json'
+	api_version = '1'
 
-	def __init__(self, auth_code=None, pin=None):
+	def __init__(self):
 		self._log('ecobeepy by brandon')
 		self.client_id = ''
 		self.config    = {}
@@ -24,16 +25,17 @@ class ecobeepy:
 				if self.config['access_token']:
 					# todo: check timestamp vs expires_in, refresh or request
 					self._getTokens(action='refresh')
-					# pass
+
+				self.getThermostats()
 			except KeyError:
 				self._getTokens(action='request')
 		except FileNotFoundError:
 			self._debuglog(Fore.RED + 'no config found - need to authenticate')
 			self._auth()
 
-	def _debuglog(self, msg):
+	def _debuglog(self, msg, err=''):
 		if self.debug:
-			self._log(Back.WHITE + Fore.BLACK + '[debug]' + Back.RESET + Fore.WHITE + ' ' + msg)
+			self._log(Back.WHITE + Fore.BLACK + '[debug]' + Back.RESET + Fore.WHITE + ' ' + msg, err)
 
 	def _log(self, msg, err=''):
 		print(Fore.CYAN + '[ecobeepy] ' + Fore.WHITE + msg, err, Style.RESET_ALL)
@@ -48,43 +50,71 @@ class ecobeepy:
 			self.config = json.load(config)
 			self._log(Fore.GREEN + 'config loaded')
 
-	def _auth(self):
-		url    = self.base_url + '/authorize'
-		params = {
-			'response_type': 'ecobeePin',
-			'client_id'    : self.client_id,
-			'scope'        : 'smartWrite',
-		}
-
+	def __api(self, uri, params=None, headers=None, authed=True, method='get'):
 		try:
-			r = requests.get(url, params=params)
+			if not params:
+				params = {}
+			if not headers:
+				headers = {}
+
+			if authed:
+				uri = '/' + self.api_version + uri
+				headers.update({
+					'Content-Type' : 'application/json;charset=UTF-8',
+					'Authorization': self.config['token_type'] + ' ' + self.config['access_token']
+				})
+
+			if method == 'get':
+				r = requests.get(self.base_url + uri, params=params, headers=headers)
+			elif method == 'post':
+				r = requests.post(self.base_url + uri, data=params, headers=headers)
+			else:
+				raise Exception('invalid request method')
 
 			if r.status_code != requests.codes.ok:
 				r.raise_for_status()
 
-			rjson                    = r.json()
-			pin                      = rjson['ecobeePin']
-			self.config['auth_code'] = rjson['code']
-			self.config['interval']  = rjson['interval']
-			self.config['scope']     = rjson['scope']
+			if r == None:
+				return r
+
+			return r.json()
+		except Exception as ex:
+			self._debuglog(Fore.RED + 'api error:', ex)
+
+	def _auth(self):
+		try:
+			params = {
+				'response_type': 'ecobeePin',
+				'scope'        : 'smartWrite',
+				'client_id'    : self.client_id,
+			}
+
+			authdata = self.__api('/authorize', params=params, authed=False)
+
+			if authdata is None:
+				raise Exception('invalid auth response')
+
+			pin                      = authdata['ecobeePin']
+			self.config['auth_code'] = authdata['code']
+			self.config['interval']  = authdata['interval']
+			self.config['scope']     = authdata['scope']
 
 			self._log(Fore.GREEN + 'successfully authed')
-			self._log(Fore.GREEN + 'PIN: ' + pin + ', expires: ' + str(rjson['expires_in']) + ' minutes')
+			self._log(Fore.GREEN + 'PIN: ' + pin + ', expires: ' + str(authdata['expires_in']) + ' minutes')
 			self._log(Fore.YELLOW + 'Go to https://www.ecobee.com/consumerportal')
 			self._log(Fore.YELLOW + 'Click "My Apps", then "Add Application". Enter PIN, then click Validate.')
 			self._log(Fore.YELLOW + 'Re-run this program after you have done the above.')
 			self._saveConfig()
 		except ValueError as err:
-			print("unable to decode json object", err)
+			print("auth error: unable to decode json object", err)
 		except TypeError as err:
-			print("typeerror: ", err)
+			print("auth error: typeerror: ", err)
 		except Exception as err:
-			print('uh oh something bad happened during auth:', err)
+			print('auth error:', err)
 
 	def _getTokens(self, action=None):
 		self._debuglog(action + 'ing tokens...')
-		url   = self.base_url + '/token'
-		rjson = None
+		tokendata = None
 
 		try:
 			if action == 'refresh':
@@ -98,43 +128,36 @@ class ecobeepy:
 			else:
 				raise Exception('invalid token action')
 
-			# request = ecobeePin, refresh = refresh_token
 			params = {
 				'grant_type': grant_type,
+				'client_id' : self.client_id,
 				param_action: param_value,
-				'client_id' : self.client_id
 			}
 
-			r     = requests.post(url, params=params)
-			rjson = r.json()
+			tokendata = self.__api('/token', params, authed=False, method='post')
 
-			if r.status_code != requests.codes.ok:
-				r.raise_for_status()
+			if tokendata == None:
+				raise Exception('invalid token data')
 
 			self._debuglog('got tokens!')
-			self.config['access_token']  = rjson['access_token']
-			self.config['refresh_token'] = rjson['refresh_token']
-			self.config['token_type']    = rjson['token_type']
+			self.config['access_token']  = tokendata['access_token']
+			self.config['refresh_token'] = tokendata['refresh_token']
+			self.config['token_type']    = tokendata['token_type']
 
-			# todo: store timestamp. expires_in is seconds? docs dont say, lol
-			self.config['expires_in']    = rjson['expires_in']
-			self.config['scope']         = rjson['scope']
+			# todo: store timestamp
+			self.config['expires_in']    = tokendata['expires_in']
+			self.config['scope']         = tokendata['scope']
 			self._saveConfig()
-		except Exception as err:
-			self._log(Fore.RED + 'error ' + action + 'ing tokens:', err)
 
-			if rjson != None:
-				self._log(Fore.RED + rjson['error_description'] + ' (' + rjson['error'] + ')')
+		except Exception as ex:
+			self._log(Fore.RED + 'error ' + action + 'ing tokens:', ex)
 
+			if tokendata != None:
+				self._log(Fore.RED + tokendata['error_description'] + ' (' + tokendata['error'] + ')')
 
 	# api methods
-	def listThermostats(self):
+	def getThermostats(self):
 		self._log('listing thermostats')
-		url     = self.base_url + '/1/thermostat'
-		headers = {
-			'Content-Type': 'application/json;charset=UTF-8',
-			'Authorization': self.config['token_type'] + ' ' + self.config['access_token']
-		}
 
 		# todo: see https://www.ecobee.com/home/developer/api/documentation/v1/objects/Selection.shtml
 		params = {
@@ -163,9 +186,8 @@ class ecobeepy:
 		}
 
 		try:
-			r     = requests.get(url, params=params, headers=headers)
-			rjson = r.json()
-			pp.pprint(rjson)
+			thermostats = self.__api('/thermostat', params)
+			pp.pprint(thermostats)
 		except Exception as err:
 			print('list thermostat error')
 			print(err)
@@ -173,4 +195,3 @@ class ecobeepy:
 
 if __name__ == '__main__':
 	ecobee = ecobeepy()
-	ecobee.listThermostats()
