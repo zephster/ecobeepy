@@ -195,13 +195,20 @@ class ecobeepy:
 			print('list thermostat error')
 			print(err)
 
-	def sendMessage(self, message=None):
+	def sendMessage(self, message=None, thermostat_id=None):
 		self._log('sending message', message)
+
+		if thermostat_id:
+			selectionType  = 'thermostats'
+			selectionMatch = thermostat_id
+		else:
+			selectionType  = 'registered'
+			selectionMatch = ''
 
 		params = {
 			'selection': {
-				'selectionType': 'registered',
-				'selectionMatch': ''
+				'selectionType': selectionType,
+				'selectionMatch': selectionMatch
 			},
 			'functions': [
 				{
@@ -217,6 +224,9 @@ class ecobeepy:
 
 		try:
 			sent = self.__api('/thermostat', params=params, method='post')
+
+			if sent['status']['code'] == 0:
+				self._log(Fore.GREEN + 'success!')
 		except Exception as err:
 			print('error sending message')
 			print(err)
