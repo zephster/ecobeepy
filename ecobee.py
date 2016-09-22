@@ -26,7 +26,8 @@ class ecobeepy:
 					# todo: check timestamp vs expires_in, refresh or request
 					self._getTokens(action='refresh')
 
-				self.getThermostats()
+				# self.getThermostats()
+				self.sendMessage('eat some fucking shit you stupid fucking bitch')
 			except KeyError:
 				self._getTokens(action='request')
 		except FileNotFoundError:
@@ -194,6 +195,31 @@ class ecobeepy:
 			print('list thermostat error')
 			print(err)
 
+	def sendMessage(self, message=None):
+		self._log('sending message', message)
+
+		params = {
+			'selection': {
+				'selectionType': 'registered',
+				'selectionMatch': ''
+			},
+			'functions': [
+				{
+					'type': 'sendMessage',
+					'params': {
+						'text': message
+					}
+				}
+			]
+		}
+
+		params = json.dumps(params)
+
+		try:
+			sent = self.__api('/thermostat', params=params, method='post')
+		except Exception as err:
+			print('error sending message')
+			print(err)
 
 if __name__ == '__main__':
 	ecobee = ecobeepy()
