@@ -51,6 +51,7 @@ class ecobeepy:
 			self._log(Fore.GREEN + 'config loaded')
 
 	def __api(self, uri, params=None, headers=None, authed=True, method='get'):
+		r = None
 		try:
 			if not params:
 				params = {}
@@ -80,6 +81,7 @@ class ecobeepy:
 			return r.json()
 		except Exception as ex:
 			self._debuglog(Fore.RED + 'api error:', ex)
+			self._debuglog(Fore.RED + r.text)
 
 	def _auth(self):
 		try:
